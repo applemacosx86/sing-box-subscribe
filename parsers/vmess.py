@@ -1,11 +1,12 @@
-import tool,json,re
+import tool, json, re
 from urllib.parse import urlparse, parse_qs
+
 def parse(data):
     info = data[8:]
     if not info or info.isspace():
         return None
     try:
-        if info.find('?') > -1: #fuck奇葩的URI格式
+        if info.find('?') > -1:  # Handle non-standard URI format
             server_info = urlparse(info)
             netquery = dict(
                 (k, v if len(v) > 1 else v[0])
@@ -14,24 +15,24 @@ def parse(data):
             try:
                 _path = tool.b64Decode(server_info.path).decode('utf-8').split("@")
             except:
-                _path = (server_info.path).split("@")
+                _path = server_info.path.split("@")
             node = {
-                'tag': netquery.get('remarks', tool.genName()+'_vmess'),
+                'tag': netquery.get('remarks', tool.genName() + '_vmess'),
                 'type': 'vmess',
                 'server': _path[1].split(":")[0],
                 'server_port': int(_path[1].split(":")[1]),
                 'uuid': _path[0].split(":")[-1],
                 'security': _path[0].split(":")[0] if ':' in _path[0] else 'auto',
-                'alter_id': int(netquery.get('alterId','0')),
+                'alter_id': int(netquery.get('alterId', '0')),
                 'packet_encoding': 'xudp'
             }
             if (netquery.get('tls') and netquery['tls'] != '') or (netquery.get('security') == 'tls'):
-                node['tls']={
+                node['tls'] = {
                     'enabled': True,
                     'insecure': True,
                     'server_name': netquery.get('peer', '')
                 }
-                if netquery.get('allowInsecure') == 0:
+                if netquery.get('allowInsecure') == '0':
                     node['tls']['insecure'] = False
                 if netquery.get('sni'):
                     node['tls']['server_name'] = netquery['sni']
@@ -40,22 +41,20 @@ def parse(data):
                         'fingerprint': netquery.get('fp', 'chrome')
                     }
             if (netquery.get('obfs') == 'websocket') or (netquery.get('type') == 'ws'):
-                # matches = re.search(r'\?ed=(\d+)$', netquery.get('path', '/'))
                 node['transport'] = {
                     'type': 'ws',
                     'path': netquery.get('path', '/').rsplit("?ed=", 1)[0],
                     'headers': {
-                        'Host': netquery.get('host', '')  # 如果 'obfsParam' 不存在或解析失败，使用 'host' 字段
+                        'Host': netquery.get('host', '')
                     }
                 }
-                
                 obfs_param = netquery.get('obfsParam', '')
                 try:
                     obfs_param_json = json.loads(obfs_param)
                     host_from_obfs_param = obfs_param_json.get('Host', '')
                     node['transport']['headers']['Host'] = host_from_obfs_param or netquery.get('host', '')
                 except json.JSONDecodeError:
-                    pass  # JSON 解码失败时忽略异常
+                    pass
             return node
         else:
             proxy_str = tool.b64Decode(info).decode('utf-8')
@@ -66,7 +65,7 @@ def parse(data):
         item = json.loads(proxy_str)
     except:
         return None
-    content = item.get('ps').strip() if item.get('ps') else tool.genName()+'_vmess'
+    content = item.get('ps').strip() if item.get('ps') else tool.genName() + '_vmess'
     node = {
         'tag': content,
         'type': 'vmess',
@@ -74,16 +73,16 @@ def parse(data):
         'server_port': int(item.get('port')),
         'uuid': item.get('id'),
         'security': item.get('scy') if item.get('scy') not in ['http', None] else 'auto',
-        'alter_id': int(item["aid"] if item.get("aid") else '0'),
+        'alter_id': int(item.get('aid', '0')),
         'packet_encoding': 'xudp'
     }
     if node['security'] == 'gun':
         node['security'] = 'auto'
     if 'tls' in item and (item['tls'] != '' and item['tls'] != 'none'):
-        node['tls']={
+        node['tls'] = {
             'enabled': True,
             'insecure': True,
-            'server_name': item.get('host', '') if item.get("net") not in ['h2', 'http'] else ''
+            'server_name': item.get('host', '') if item.get('net') not in ['h2', 'http'] else ''
         }
         if item.get('verify_cert') == False:
             node['tls']['insecure'] = False
@@ -94,46 +93,40 @@ def parse(data):
                 'enabled': True,
                 'fingerprint': item['fp']
             }
-    if item.get("net"):
-        if item['net'] in ['h2', 'http', 'tcp']:
-            node['transport'] = {
-                'type':'http'
-            }
-            if item.get('headers'):
-                node['transport']['headers'] = item['headers']
-            if item.get('host'):
-                node['transport']['host'] = item['host']
-            if item.get('path'):
-                if type(item.get('path')) == str:
-                    node['transport']['path'] = item['path'].rsplit("?")[0]
-                else:
+    if item.get('net'):
+        if item['net'] in ['h2', 'http']:
+            # Only set HTTP transport if path and host are provided
+            if item.get('path') and item.get('host'):
+                node['transport'] = {
+                    'type': 'http',
+                    'path': item['path'].rsplit("?")[0] if type(item.get('path')) == str else item['path'][0],
+                    'headers': item.get('headers', {}),
+                    'host': item.get('host')
+                }
+                if type(item.get('path')) != str:
                     node['transport']['method'] = 'GET'
-                    node['transport']['path'] = item['path'][0]
+        elif item['net'] == 'tcp':
+            # Omit transport for TCP (default for vmess)
+            pass
         elif item['net'] == 'ws':
             node['transport'] = {
-                'type': 'ws'
-            }
-            if item.get('host'):
-                node['transport'] = {
                 'type': 'ws',
+                'path': item['path'].rsplit("?ed=", 1)[0] if re.search(r'\?ed=(\d+)$', item.get('path', '')) else item.get('path', '/'),
                 'headers': {
-                    'Host': item['host']
+                    'Host': item.get('host', '')
                 }
             }
-            if item.get('path'):
-                matches = re.search(r'\?ed=(\d+)$', item['path'])
-                node['transport']['path'] = item['path'].rsplit("?ed=", 1)[0] if matches else item['path']
-                if matches:
-                    node['transport']['early_data_header_name'] = 'Sec-WebSocket-Protocol'
-                    node['transport']['max_early_data'] = int(item['path'].rsplit("?ed=", 1)[1])
+            if re.search(r'\?ed=(\d+)$', item.get('path', '')):
+                node['transport']['early_data_header_name'] = 'Sec-WebSocket-Protocol'
+                node['transport']['max_early_data'] = int(item['path'].rsplit("?ed=", 1)[1])
         elif item['net'] == 'quic':
             node['transport'] = {
-                'type':'quic'
+                'type': 'quic'
             }
         elif item['net'] == 'grpc':
             node['transport'] = {
-                'type':'grpc',
-                'service_name':item.get('path', '')
+                'type': 'grpc',
+                'service_name': item.get('path', '')
             }
     if item.get('protocol') in ['smux', 'yamux', 'h2mux']:
         node['multiplex'] = {
@@ -143,8 +136,8 @@ def parse(data):
         if item.get('max_streams'):
             node['multiplex']['max_streams'] = int(item['max_streams'])
         else:
-            node['multiplex']['max_connections'] = int(item['max_connections'])
-            node['multiplex']['min_streams'] = int(item['min_streams'])
+            node['multiplex']['max_connections'] = int(item.get('max_connections', 0))
+            node['multiplex']['min_streams'] = int(item.get('min_streams', 0))
         if item.get('padding') == True:
             node['multiplex']['padding'] = True
     return node
